@@ -83,6 +83,13 @@ const messageSchema = new mongoose.Schema(
         type: String,
         default: null,
       },
+      savedBy: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: []
+        }
+      ],
     },
 
     // System message metadata

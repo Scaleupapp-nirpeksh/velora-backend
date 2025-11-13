@@ -89,9 +89,6 @@ class MessageService {
     }
   }
 
-  /**
-   * Send a photo message
-   */
   static async sendPhotoMessage(
     conversationId,
     senderId,
@@ -105,23 +102,23 @@ class MessageService {
         'participants.userId': senderId,
         status: 'active',
       });
-
+  
       if (!conversation) {
         throw new Error('Conversation not found or inactive');
       }
-
+  
       // Check file size (max 5MB)
       if (photoFile.size > 5 * 1024 * 1024) {
         throw new Error('Photo size exceeds 5MB limit');
       }
-
+  
       // Check file type
       const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
       if (!allowedTypes.includes(photoFile.mimetype)) {
         throw new Error('Invalid file type. Only JPEG, PNG, and WebP allowed');
       }
-
-      // Process image (resize and compress)
+  
+      // Process image
       const processedImage = await sharp(photoFile.buffer)
         .resize(1200, 1200, {
           fit: 'inside',
@@ -129,7 +126,7 @@ class MessageService {
         })
         .jpeg({ quality: 85 })
         .toBuffer();
-
+  
       // Create thumbnail
       const thumbnail = await sharp(photoFile.buffer)
         .resize(200, 200, {
@@ -137,32 +134,33 @@ class MessageService {
         })
         .jpeg({ quality: 70 })
         .toBuffer();
-
+  
       // Get image metadata
       const metadata = await sharp(photoFile.buffer).metadata();
-
+  
       // Upload to S3
       const s3Key = `messages/photos/${conversationId}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
       const thumbnailKey = `messages/thumbnails/${conversationId}/${Date.now()}_thumb.jpg`;
-
-      const [photoUrl, thumbnailUrl] = await Promise.all([
+  
+      // Upload and get results
+      const [photoUploadResult, thumbnailUploadResult] = await Promise.all([
         s3Service.uploadFile(processedImage, s3Key, 'image/jpeg'),
         s3Service.uploadFile(thumbnail, thumbnailKey, 'image/jpeg'),
       ]);
-
-      // Check for inappropriate content (if you have image moderation API)
-      const isSafe = await this.moderateImage(photoUrl);
+  
+      // Check for inappropriate content
+      const isSafe = await this.moderateImage(photoUploadResult.url); // ← Use .url
       
-      // Create message
+      // Create message with proper string URLs
       const message = await Message.create({
         conversationId,
         senderId,
         type: 'photo',
         media: {
-          url: photoUrl,
-          thumbnailUrl,
-          s3Key,
-          s3ThumbnailKey: thumbnailKey,
+          url: photoUploadResult.url,  // ← String, not object
+          thumbnailUrl: thumbnailUploadResult.url,  // ← String, not object
+          s3Key: photoUploadResult.key || s3Key,  // Store original key
+          s3ThumbnailKey: thumbnailUploadResult.key || thumbnailKey,
           size: processedImage.length,
           width: metadata.width,
           height: metadata.height,
@@ -175,27 +173,27 @@ class MessageService {
         flagReason: !isSafe ? 'inappropriate_image' : null,
         moderationStatus: isSafe ? 'approved' : 'auto_flagged',
       });
-
+  
       // Update conversation
       await conversation.updateLastMessage(message);
-
+  
       // Populate sender
       await message.populate('senderId', 'firstName lastName profilePhoto username');
-
+  
       logger.info(`Photo message sent in conversation ${conversationId}`);
-
+  
       return message;
-
+  
     } catch (error) {
       logger.error('Error sending photo message:', error);
       throw error;
     }
   }
 
-  /**
-   * Send a voice message
-   */
-  static async sendVoiceMessage(
+ /**
+ * Send a voice message
+ */
+static async sendVoiceMessage(
     conversationId,
     senderId,
     audioFile,
@@ -209,30 +207,35 @@ class MessageService {
         'participants.userId': senderId,
         status: 'active',
       });
-
+  
       if (!conversation) {
         throw new Error('Conversation not found or inactive');
       }
-
+  
       // Validate duration (max 60 seconds)
       if (duration > 60) {
         throw new Error('Voice message exceeds 60 second limit');
       }
-
+  
       // Check file type
       const allowedTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav'];
       if (!allowedTypes.includes(audioFile.mimetype)) {
         throw new Error('Invalid audio format');
       }
-
+  
       // Upload to S3
       const s3Key = `messages/voice/${conversationId}/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.m4a`;
-      const audioUrl = await s3Service.uploadFile(
+      
+      // Upload and get the result object
+      const audioUploadResult = await s3Service.uploadFile(
         audioFile.buffer,
         s3Key,
         audioFile.mimetype
       );
-
+  
+      // Extract the URL string from the result
+      const audioUrl = audioUploadResult.url || audioUploadResult;  // Handle both object and string returns
+  
       // Transcribe with Whisper (optional)
       let transcribedText = null;
       try {
@@ -249,16 +252,16 @@ class MessageService {
         logger.error('Error transcribing voice message:', transcribeError);
         // Continue without transcription
       }
-
-      // Create message
+  
+      // Create message with proper string URL
       const message = await Message.create({
         conversationId,
         senderId,
         type: 'voice',
         text: transcribedText, // Store transcription if available
         media: {
-          url: audioUrl,
-          s3Key,
+          url: audioUrl,  // This is now a string, not an object
+          s3Key: audioUploadResult.key || s3Key,  // Store the S3 key for deletion
           duration,
           size: audioFile.size,
           mimeType: audioFile.mimetype,
@@ -267,17 +270,17 @@ class MessageService {
         clientMessageId,
         status: 'sent',
       });
-
+  
       // Update conversation
       await conversation.updateLastMessage(message);
-
+  
       // Populate sender
       await message.populate('senderId', 'firstName lastName profilePhoto username');
-
+  
       logger.info(`Voice message sent in conversation ${conversationId}`);
-
+  
       return message;
-
+  
     } catch (error) {
       logger.error('Error sending voice message:', error);
       throw error;
@@ -650,22 +653,35 @@ static async getMessage(messageId) {
     }
   }
   
-  /**
-   * Toggle save message
-   */
-  static async toggleSaveMessage(messageId, userId) {
+ /**
+ * Toggle save message
+ */
+static async toggleSaveMessage(messageId, userId) {
     try {
       const message = await Message.findById(messageId);
+      
+      if (!message) {
+        throw new Error('Message not found');
+      }
+      
+      // Initialize savedBy array if it doesn't exist
+      if (!message.savedBy) {
+        message.savedBy = [];
+      }
+      
+      // Check if user has already saved the message
       const isSaved = message.savedBy.includes(userId);
       
       if (isSaved) {
+        // Remove from saved
         await Message.findByIdAndUpdate(messageId, {
           $pull: { savedBy: userId }
         });
         return false;
       } else {
+        // Add to saved
         await Message.findByIdAndUpdate(messageId, {
-          $addToSet: { savedBy: userId }
+          $addToSet: { savedBy: userId }  // $addToSet prevents duplicates
         });
         return true;
       }
