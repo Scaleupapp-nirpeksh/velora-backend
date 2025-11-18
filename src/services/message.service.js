@@ -218,7 +218,14 @@ static async sendVoiceMessage(
       }
   
       // Check file type
-      const allowedTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav'];
+      const allowedTypes = [ 'audio/mpeg',
+        'audio/mp3',
+        'audio/mp4',
+        'audio/m4a',
+        'audio/x-m4a',
+        'audio/wav',
+        'audio/webm',
+        'audio/ogg'];
       if (!allowedTypes.includes(audioFile.mimetype)) {
         throw new Error('Invalid audio format');
       }
