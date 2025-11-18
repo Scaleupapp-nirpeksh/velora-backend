@@ -489,6 +489,61 @@ class ConversationService {
       throw error;
     }
   }
+
+  // Add this method to src/services/conversation.service.js
+
+/**
+ * Get conversation by match ID
+ * Returns the conversation if it exists, or null if not found
+ */
+static async getConversationByMatch(matchId, userId) {
+  try {
+    // Find conversation by match ID
+    const conversation = await Conversation.findOne({ 
+      matchId,
+      'participants.userId': userId 
+    })
+      .populate('participants.userId', 'firstName lastName profilePhoto username')
+      .populate('lastMessage.senderId', 'firstName')
+      .lean();
+
+    if (!conversation) {
+      return null; // No conversation exists for this match yet
+    }
+
+    // Format the conversation for response
+    const participant = conversation.participants.find(
+      p => p.userId._id.toString() === userId.toString()
+    );
+    const otherParticipant = conversation.participants.find(
+      p => p.userId._id.toString() !== userId.toString()
+    );
+
+    return {
+      _id: conversation._id,
+      matchId: conversation.matchId,
+      lastMessage: conversation.lastMessage,
+      lastMessageAt: conversation.lastMessageAt,
+      unreadCount: participant?.unreadCount || 0,
+      isMuted: participant?.isMuted || false,
+      otherUser: {
+        _id: otherParticipant?.userId._id,
+        firstName: otherParticipant?.userId.firstName,
+        lastName: otherParticipant?.userId.lastName,
+        profilePhoto: otherParticipant?.userId.profilePhoto,
+        username: otherParticipant?.userId.username,
+        isBlocked: otherParticipant?.isBlocked || false,
+      },
+      status: conversation.status,
+      createdAt: conversation.createdAt,
+      iceBreakers: conversation.iceBreakers,
+    };
+
+  } catch (error) {
+    logger.error('Error getting conversation by match:', error);
+    throw error;
+  }
+}
 }
 
 module.exports = ConversationService;

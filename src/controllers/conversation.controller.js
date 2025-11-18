@@ -465,7 +465,7 @@ class ConversationController {
       const userId = req.user._id;
       const { matchId } = req.params;
 
-      const conversation = await ConversationService.getConversationByMatch(
+      const conversation = await ConversationService?.getConversationByMatch(
         matchId,
         userId
       );
