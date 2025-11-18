@@ -410,24 +410,29 @@ class UserService {
   async getPublicProfile(userId, viewerId) {
     try {
       const user = await User.findById(userId).select(
-        'firstName lastName username profilePhoto photos bio gender location questionsAnswered isPremium createdAt dateOfBirth'
+        'firstName lastName username profilePhoto photos bio gender location questionsAnswered isPremium createdAt dateOfBirth isActive isBanned' // ← Added here
       );
-
+  
       if (!user) {
         throw new ApiError(404, 'User not found');
       }
-
+  
       if (!user.isActive) {
         throw new ApiError(403, 'This profile is not available');
       }
-
+  
       if (user.isBanned) {
         throw new ApiError(403, 'This profile has been removed');
       }
-
+  
+      // Remove the fields before returning (since they shouldn't be visible to other users)
+      const publicProfile = user.toObject();
+      delete publicProfile.isActive;
+      delete publicProfile.isBanned;
+  
       logger.info('Public profile viewed', { userId, viewerId });
-
-      return user;
+  
+      return publicProfile;
     } catch (error) {
       logger.error('Get public profile failed', { userId, error: error.message });
       throw error;

@@ -47,7 +47,7 @@ class SocketManager {
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.userId)
+        const user = await User.findById(decoded.userId || decoded.id)
           .select('_id username isOnline');
 
         if (!user) {
@@ -107,9 +107,12 @@ class SocketManager {
         { limit: 100 }
       );
 
-      conversations.data.forEach(conversation => {
-        socket.join(`conversation:${conversation._id}`);
-      });
+      // FIX: Remove .data reference - conversations is already an array
+      if (conversations && Array.isArray(conversations)) {
+        conversations.forEach(conversation => {
+          socket.join(`conversation:${conversation._id}`);
+        });
+      }
 
     } catch (error) {
       logger.error('Error joining conversations:', error);
@@ -206,9 +209,13 @@ class SocketManager {
         });
 
         // Send push notification to offline recipient
-        const recipientId = conversation.participants.find(
-          p => p.toString() !== socket.userId
-        );
+        // FIX: Access participants properly based on conversation structure
+        const otherParticipant = conversation.otherUser || 
+          conversation.participants?.find(
+            p => (p.userId?._id || p.userId || p).toString() !== socket.userId
+          );
+        
+        const recipientId = otherParticipant?._id || otherParticipant?.userId || otherParticipant;
 
         if (recipientId && !this.userSockets.has(recipientId.toString())) {
           await this.sendPushNotification(recipientId, message, conversation);
@@ -268,10 +275,11 @@ class SocketManager {
       try {
         const { conversationId, messageId } = data;
 
-        await MessageService.markMessagesAsRead(
+        // FIX: Use correct method name - markAsRead instead of markMessagesAsRead
+        await MessageService.markAsRead(
           conversationId,
           socket.userId,
-          messageId
+          [messageId] // Pass as array
         );
 
         // Notify sender that message was read
@@ -296,18 +304,23 @@ class SocketManager {
       try {
         const { messageId } = data;
 
-        const message = await MessageService.deleteMessage(
+        const result = await MessageService.deleteMessage(
           messageId,
           socket.userId
         );
 
-        if (message) {
-          // Notify all participants
-          this.io.to(`conversation:${message.conversationId}`).emit('message:deleted', {
-            messageId,
-            conversationId: message.conversationId,
-            deletedBy: socket.userId
-          });
+        if (result && result.success) {
+          // Get message details to find conversation
+          const message = await MessageService.getMessage(messageId);
+          
+          if (message) {
+            // Notify all participants
+            this.io.to(`conversation:${message.conversationId}`).emit('message:deleted', {
+              messageId,
+              conversationId: message.conversationId,
+              deletedBy: socket.userId
+            });
+          }
         }
 
       } catch (error) {
@@ -429,13 +442,16 @@ class SocketManager {
         { limit: 100 }
       );
 
-      conversations.data.forEach(conversation => {
-        this.io.to(`conversation:${conversation._id}`).emit('user:status', {
-          userId,
-          isOnline,
-          lastSeen: new Date()
+      // FIX: Remove .data reference - conversations is already an array
+      if (conversations && Array.isArray(conversations)) {
+        conversations.forEach(conversation => {
+          this.io.to(`conversation:${conversation._id}`).emit('user:status', {
+            userId,
+            isOnline,
+            lastSeen: new Date()
+          });
         });
-      });
+      }
 
     } catch (error) {
       logger.error('Error updating user status:', error);

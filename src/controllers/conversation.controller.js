@@ -2,6 +2,7 @@
 
 const ConversationService = require('../services/conversation.service');
 const MessageService = require('../services/message.service');
+const socketManager = require('../config/socket');
 const logger = require('../utils/logger');
 const ApiError = require('../utils/apiError');
 const ApiResponse = require('../utils/apiResponse');
@@ -103,8 +104,8 @@ class ConversationController {
 
       const messages = await MessageService.getMessages(
         conversationId,
-        userId,  // ✅ Pass userId as second parameter
-        {        // ✅ Pass options as third parameter
+        userId,
+        {
           cursor: cursor,
           limit: parseInt(limit)
         }
@@ -176,15 +177,27 @@ class ConversationController {
           clientMessageId
         );
       } else if (voiceFile) {
+        const duration = req.body.duration ? parseInt(req.body.duration) : undefined;
         message = await MessageService.sendVoiceMessage(
           conversationId,
           senderId,
           voiceFile,
-          clientMessageId
+          clientMessageId,
+          duration
         );
       } else {
         throw new ApiError('Message content required', 400);
       }
+
+      // ✅ Emit socket event for real-time delivery
+      socketManager.emitToConversation(
+        conversationId.toString(),
+        'message:new',
+        {
+          message,
+          conversationId: conversationId.toString()
+        }
+      );
 
       res.status(201).json(
         new ApiResponse(
@@ -228,11 +241,23 @@ class ConversationController {
   
       const messageIds = messages.map(m => m._id);
   
-      // Call the correct method with correct params
+      // Mark as read
       await MessageService.markAsRead(
         conversationId,
         userId,
-        messageIds  // Pass array of message IDs
+        messageIds
+      );
+
+      // ✅ Emit socket event for read receipts
+      socketManager.emitToConversation(
+        conversationId.toString(),
+        'message:read:receipt',
+        {
+          conversationId: conversationId.toString(),
+          messageId: upToMessageId,
+          readBy: userId.toString(),
+          readAt: new Date()
+        }
       );
   
       res.status(200).json(
@@ -270,6 +295,17 @@ class ConversationController {
       await MessageService.deleteMessage(
         messageId,
         userId
+      );
+
+      // ✅ Emit socket event for message deletion
+      socketManager.emitToConversation(
+        conversationId.toString(),
+        'message:deleted',
+        {
+          messageId,
+          conversationId: conversationId.toString(),
+          deletedBy: userId.toString()
+        }
       );
 
       res.status(200).json(
@@ -350,6 +386,18 @@ class ConversationController {
         await ConversationService.unblockUser(conversationId, userId, otherUserId);
       }
 
+      // ✅ Emit socket event for block/unblock
+      socketManager.emitToConversation(
+        conversationId.toString(),
+        'conversation:block',
+        {
+          conversationId: conversationId.toString(),
+          blocked: action === 'block',
+          blockedBy: userId.toString(),
+          blockedUser: otherUserId.toString()
+        }
+      );
+
       res.status(200).json(
         new ApiResponse(
           200,
@@ -383,6 +431,16 @@ class ConversationController {
       }
 
       await ConversationService.deleteConversation(conversationId, userId);
+
+      // ✅ Emit socket event for conversation deletion
+      socketManager.emitToConversation(
+        conversationId.toString(),
+        'conversation:deleted',
+        {
+          conversationId: conversationId.toString(),
+          deletedBy: userId.toString()
+        }
+      );
 
       res.status(200).json(
         new ApiResponse(

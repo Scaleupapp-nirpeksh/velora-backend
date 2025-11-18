@@ -6,6 +6,7 @@ const MatchingService = require('../services/matching.service');
 const logger = require('../utils/logger');
 const ApiError = require('../utils/apiError');
 const ApiResponse = require('../utils/apiResponse');
+const socketManager = require('../config/socket'); // ✅ ADD THIS
 
 class MessageController {
   /**
@@ -25,11 +26,11 @@ class MessageController {
       const match = await MatchingService.getMatch(matchId, senderId);
       
       if (!match) {
-        throw new ApiError('Match not found', 404);
+        throw new ApiError(404, 'Match not found');
       }
 
       if (match.status !== 'mutual_like') {
-        throw new ApiError('Can only message mutual matches', 403);
+        throw new ApiError(403, 'Can only message mutual matches');
       }
 
       const conversation = await ConversationService.startConversation(
@@ -44,6 +45,12 @@ class MessageController {
         text,
         clientMessageId
       );
+
+      // ✅ EMIT SOCKET EVENT
+      socketManager.emitToConversation(conversation._id.toString(), 'message:new', {
+        message,
+        conversationId: conversation._id.toString()
+      });
 
       res.status(201).json(
         new ApiResponse(
@@ -75,7 +82,7 @@ class MessageController {
       const message = await MessageService.getMessage(messageId);
 
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
 
       // Verify user is participant in conversation
@@ -85,7 +92,7 @@ class MessageController {
       );
 
       if (!conversation) {
-        throw new ApiError('Unauthorized to view this message', 403);
+        throw new ApiError(403, 'Unauthorized to view this message');
       }
 
       res.status(200).json(
@@ -113,17 +120,17 @@ class MessageController {
       const { text } = req.body;
 
       if (!text || text.trim().length === 0) {
-        throw new ApiError('Message text required', 400);
+        throw new ApiError(400, 'Message text required');
       }
 
       const message = await MessageService.getMessage(messageId);
 
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
 
       if (message.senderId.toString() !== userId.toString()) {
-        throw new ApiError('Can only edit your own messages', 403);
+        throw new ApiError(403, 'Can only edit your own messages');
       }
 
       // Check 5-minute window
@@ -131,12 +138,23 @@ class MessageController {
       const messageAge = Date.now() - new Date(message.createdAt).getTime();
       
       if (messageAge > fiveMinutes) {
-        throw new ApiError('Can only edit messages within 5 minutes', 403);
+        throw new ApiError(403, 'Can only edit messages within 5 minutes');
       }
 
       const updatedMessage = await MessageService.editMessage(
         messageId,
         text
+      );
+
+      // ✅ EMIT SOCKET EVENT
+      socketManager.emitToConversation(
+        message.conversationId.toString(),
+        'message:edited',
+        {
+          message: updatedMessage,
+          conversationId: message.conversationId.toString(),
+          editedBy: userId.toString()
+        }
       );
 
       res.status(200).json(
@@ -166,13 +184,13 @@ class MessageController {
       // Validate emoji (basic check)
       const allowedEmojis = ['❤️', '😊', '😂', '😍', '👍', '🔥', '😮', '😢'];
       if (!allowedEmojis.includes(emoji)) {
-        throw new ApiError('Invalid emoji reaction', 400);
+        throw new ApiError(400, 'Invalid emoji reaction');
       }
 
       const message = await MessageService.getMessage(messageId);
 
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
 
       // Verify user is participant
@@ -182,10 +200,23 @@ class MessageController {
       );
 
       if (!conversation) {
-        throw new ApiError('Unauthorized to react to this message', 403);
+        throw new ApiError(403, 'Unauthorized to react to this message');
       }
 
       await MessageService.addReaction(messageId, userId, emoji);
+
+      // ✅ EMIT SOCKET EVENT
+      socketManager.emitToConversation(
+        message.conversationId.toString(),
+        'message:reaction',
+        {
+          messageId,
+          conversationId: message.conversationId.toString(),
+          userId: userId.toString(),
+          emoji,
+          action: 'add'
+        }
+      );
 
       res.status(200).json(
         new ApiResponse(
@@ -210,7 +241,25 @@ class MessageController {
       const userId = req.user._id;
       const { messageId } = req.params;
 
+      const message = await MessageService.getMessage(messageId);
+
+      if (!message) {
+        throw new ApiError(404, 'Message not found');
+      }
+
       await MessageService.removeReaction(messageId, userId);
+
+      // ✅ EMIT SOCKET EVENT
+      socketManager.emitToConversation(
+        message.conversationId.toString(),
+        'message:reaction',
+        {
+          messageId,
+          conversationId: message.conversationId.toString(),
+          userId: userId.toString(),
+          action: 'remove'
+        }
+      );
 
       res.status(200).json(
         new ApiResponse(
@@ -247,7 +296,7 @@ class MessageController {
       );
 
       if (!conversation) {
-        throw new ApiError('Conversation not found', 404);
+        throw new ApiError(404, 'Conversation not found');
       }
 
       const media = await MessageService.getMediaMessages(
@@ -282,17 +331,17 @@ class MessageController {
       const { conversationIds } = req.body;
 
       if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
-        throw new ApiError('Conversation IDs required', 400);
+        throw new ApiError(400, 'Conversation IDs required');
       }
 
       if (conversationIds.length > 5) {
-        throw new ApiError('Can forward to maximum 5 conversations', 400);
+        throw new ApiError(400, 'Can forward to maximum 5 conversations');
       }
 
       const message = await MessageService.getMessage(messageId);
 
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
 
       // Verify user is participant in source conversation
@@ -302,7 +351,7 @@ class MessageController {
       );
 
       if (!sourceConversation) {
-        throw new ApiError('Unauthorized to forward this message', 403);
+        throw new ApiError(403, 'Unauthorized to forward this message');
       }
 
       // Forward to each conversation
@@ -319,6 +368,17 @@ class MessageController {
             convId,
             userId
           );
+          
+          // ✅ EMIT SOCKET EVENT for each forwarded message
+          socketManager.emitToConversation(
+            convId,
+            'message:new',
+            {
+              message: forwardedMessage,
+              conversationId: convId
+            }
+          );
+
           forwarded.push({
             conversationId: convId,
             messageId: forwardedMessage._id
@@ -352,12 +412,12 @@ class MessageController {
       const message = await MessageService.getMessage(messageId);
   
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
   
       // Only sender can see read receipts
       if (message.senderId.toString() !== userId.toString()) {
-        throw new ApiError('Only message sender can view receipts', 403);
+        throw new ApiError(403, 'Only message sender can view receipts');
       }
   
       // Check if readBy exists, otherwise return empty array
@@ -393,7 +453,7 @@ class MessageController {
       const message = await MessageService.getMessage(messageId);
 
       if (!message) {
-        throw new ApiError('Message not found', 404);
+        throw new ApiError(404, 'Message not found');
       }
 
       // Verify user is participant
@@ -403,7 +463,7 @@ class MessageController {
       );
 
       if (!conversation) {
-        throw new ApiError('Unauthorized to save this message', 403);
+        throw new ApiError(403, 'Unauthorized to save this message');
       }
 
       const isSaved = await MessageService.toggleSaveMessage(
