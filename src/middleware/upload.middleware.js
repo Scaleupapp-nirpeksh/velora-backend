@@ -16,21 +16,27 @@ const logger = require('../utils/logger');
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024; // 10MB
 
-// Allowed MIME types
 const ALLOWED_IMAGE_TYPES = [
   'image/jpeg',
   'image/jpg',
   'image/png',
-  'image/webp'
+  'image/webp',
+  'image/heic',
+  'image/heif'
 ];
 
 const ALLOWED_AUDIO_TYPES = [
-  'audio/mpeg',      // .mp3
-  'audio/mp4',       // .m4a
-  'audio/wav',
-  'audio/webm',
-  'audio/ogg'
+  'audio/mpeg',       // .mp3
+  'audio/mp4',        // .m4a
+  'audio/x-m4a',      // iPhone sometimes sends this
+  'audio/wav',        // .wav
+  'audio/x-wav',      // iPhone Safari uses this
+  'audio/webm',       // .webm
+  'audio/ogg',        // .ogg
+  'audio/opus',       // WhatsApp/IG voice notes
+  'audio/x-caf'       // .caf (iPhone recordings)
 ];
+
 
 /**
  * Multer configuration for memory storage
