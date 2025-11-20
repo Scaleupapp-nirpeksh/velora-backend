@@ -24,12 +24,14 @@ app.use(helmet({
 }));
 
 // CORS configuration
-const corsOptions = {
-  origin: process.env.CORS_ORIGIN || '*',
+app.use(cors({
+  origin: (origin, callback) => callback(null, true), // allow all origins
   credentials: true,
-  optionsSuccessStatus: 200,
-};
-app.use(cors(corsOptions));
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
+}));
+
 
 // Rate limiting
 const limiter = rateLimit({
