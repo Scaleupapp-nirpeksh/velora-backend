@@ -273,161 +273,113 @@ class QuestionService {
     return tomorrow;
   }
 
-  /**
-   * Submit an answer to a question
-   * Validates unlock status, sequential answering, and answer format
-   * 
-   * FIXED: Sequential validation now works with day-based progression
-   * 
-   * @param {ObjectId} userId - User ID
-   * @param {Number} questionNumber - Question number
-   * @param {Object} answerData - Answer data
-   * @returns {Promise<Object>} Created answer
-   */
-  static async submitAnswer(userId, questionNumber, answerData) {
-    try {
-      // 1. Get user
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      // 2. Get question
-      const question = await Question.findOne({
-        questionNumber,
-        isActive: true
-      });
-
-      if (!question) {
-        throw new Error('Question not found');
-      }
-
-      // 3. Check if question is unlocked
-      const unlockedNumbers = await this.getUnlockedQuestionNumbers(user.createdAt);
-      if (!unlockedNumbers.includes(questionNumber)) {
-        throw new Error('This question is not unlocked yet. Please wait for tomorrow.');
-      }
-
-      // 4. Check if already answered
-      const existingAnswer = await Answer.findOne({ userId, questionNumber });
-      if (existingAnswer) {
-        throw new Error('You have already answered this question. Answers cannot be edited.');
-      }
-
-      // 5. Validate sequential answering by day (must complete earlier days before later days)
-      // Get all answered questions for this user
-      const answeredQuestions = await Answer.find({ userId }).select('questionNumber');
-      const answeredNumbers = answeredQuestions.map(a => a.questionNumber);
-      
-      // Get all unlocked questions with their dayUnlocked info
-      const unlockedQuestionsWithDay = await Question.find({
-        questionNumber: { $in: unlockedNumbers },
-        isActive: true
-      }).select('questionNumber dayUnlocked').sort({ dayUnlocked: 1, questionNumber: 1 });
-
-      // Group questions by dayUnlocked
-      const questionsByDay = {};
-      for (const q of unlockedQuestionsWithDay) {
-        if (!questionsByDay[q.dayUnlocked]) {
-          questionsByDay[q.dayUnlocked] = [];
-        }
-        questionsByDay[q.dayUnlocked].push(q.questionNumber);
-      }
-
-      // Find the earliest day with unanswered questions
-      let earliestDayWithUnanswered = null;
-      const sortedDays = Object.keys(questionsByDay).map(d => parseInt(d)).sort((a, b) => a - b);
-      
-      for (const day of sortedDays) {
-        const dayQuestions = questionsByDay[day];
-        const unansweredInDay = dayQuestions.filter(num => !answeredNumbers.includes(num));
-        
-        if (unansweredInDay.length > 0) {
-          earliestDayWithUnanswered = day;
-          break;
-        }
-      }
-
-      // If there are unanswered questions from earlier days, enforce day-based sequential answering
-      if (earliestDayWithUnanswered !== null) {
-        const currentQuestionDay = unlockedQuestionsWithDay.find(
-          q => q.questionNumber === questionNumber
-        )?.dayUnlocked;
-        
-        if (currentQuestionDay && currentQuestionDay > earliestDayWithUnanswered) {
-          const earliestUnansweredQuestions = questionsByDay[earliestDayWithUnanswered].filter(
-            num => !answeredNumbers.includes(num)
-          );
-          throw new Error(
-            `Please complete Day ${earliestDayWithUnanswered} questions first. ` +
-            `Remaining questions: ${earliestUnansweredQuestions.join(', ')}`
-          );
-        }
-      }
-
-      // 6. Validate answer format matches question type
-      this.validateAnswerFormat(question, answerData);
-
-      // 7. Create answer object
-      const answerPayload = {
-        userId,
-        questionId: question._id,
-        questionNumber,
-        timeSpent: answerData.timeSpent || 0
-      };
-
-      // Handle different answer types
-      if (answerData.answerType === 'voice') {
-        // Voice answer (will be transcribed later)
-        answerPayload.isVoiceAnswer = true;
-        answerPayload.audioUrl = answerData.audioUrl;
-        answerPayload.audioDuration = answerData.audioDuration;
-        answerPayload.transcriptionStatus = 'pending';
-      } else if (question.questionType === 'text') {
-        // Text answer (typed)
-        answerPayload.textAnswer = answerData.textAnswer;
-      } else if (question.questionType === 'single_choice') {
-        // Single choice
-        answerPayload.selectedOption = answerData.selectedOption;
-      } else if (question.questionType === 'multiple_choice') {
-        // Multiple choice (exactly 2)
-        answerPayload.selectedOptions = answerData.selectedOptions;
-      }
-
-      // Follow-up answer (if provided)
-      if (answerData.followUpAnswer) {
-        answerPayload.followUpAnswer = answerData.followUpAnswer;
-      }
-
-      // 8. Save answer
-      const answer = await Answer.create(answerPayload);
-
-      // 9. Update user.questionsAnswered count
-      user.questionsAnswered = (user.questionsAnswered || 0) + 1;
-      await user.save();
-
-      logger.info(`User ${userId} answered question ${questionNumber}`);
-
-      // 10. If voice answer, trigger transcription (async)
-      if (answerData.answerType === 'voice') {
-        this.transcribeVoiceAnswer(answer._id).catch(err => {
-          logger.error('Error transcribing voice answer:', err);
-        });
-      }
-
-      return {
-        answer: answer.toClientJSON(),
-        progress: {
-          questionsAnswered: user.questionsAnswered,
-          totalQuestions: 50,
-          percentageComplete: Math.round((user.questionsAnswered / 50) * 100)
-        }
-      };
-    } catch (error) {
-      logger.error('Error submitting answer:', error);
-      throw error;
+/**
+ * Submit an answer to a question
+ * Validates unlock status and answer format
+ * 
+ * FIXED: Removed strict sequential validation - users can answer any unlocked question
+ * 
+ * @param {ObjectId} userId - User ID
+ * @param {Number} questionNumber - Question number
+ * @param {Object} answerData - Answer data
+ * @returns {Promise<Object>} Created answer
+ */
+static async submitAnswer(userId, questionNumber, answerData) {
+  try {
+    // 1. Get user
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new Error('User not found');
     }
+    
+    // 2. Get question
+    const question = await Question.findOne({
+      questionNumber,
+      isActive: true
+    });
+    if (!question) {
+      throw new Error('Question not found');
+    }
+    
+    // 3. Check if question is unlocked
+    const unlockedNumbers = await this.getUnlockedQuestionNumbers(user.createdAt);
+    if (!unlockedNumbers.includes(questionNumber)) {
+      throw new Error('This question is not unlocked yet. Please wait for tomorrow.');
+    }
+    
+    // 4. Check if already answered
+    const existingAnswer = await Answer.findOne({ userId, questionNumber });
+    if (existingAnswer) {
+      throw new Error('You have already answered this question. Answers cannot be edited.');
+    }
+    
+    // 5. [REMOVED] Sequential validation - users can now answer any unlocked question in any order
+    // This provides better UX for testing and actual usage
+    logger.info(`User ${userId} answering question ${questionNumber} - no sequential validation enforced`);
+    
+    // 6. Validate answer format matches question type
+    this.validateAnswerFormat(question, answerData);
+    
+    // 7. Create answer object
+    const answerPayload = {
+      userId,
+      questionId: question._id,
+      questionNumber,
+      timeSpent: answerData.timeSpent || 0
+    };
+    
+    // Handle different answer types
+    if (answerData.answerType === 'voice') {
+      // Voice answer (will be transcribed later)
+      answerPayload.isVoiceAnswer = true;
+      answerPayload.audioUrl = answerData.audioUrl;
+      answerPayload.audioDuration = answerData.audioDuration;
+      answerPayload.transcriptionStatus = 'pending';
+    } else if (question.questionType === 'text') {
+      // Text answer (typed)
+      answerPayload.textAnswer = answerData.textAnswer;
+    } else if (question.questionType === 'single_choice') {
+      // Single choice
+      answerPayload.selectedOption = answerData.selectedOption;
+    } else if (question.questionType === 'multiple_choice') {
+      // Multiple choice (exactly 2)
+      answerPayload.selectedOptions = answerData.selectedOptions;
+    }
+    
+    // Follow-up answer (if provided)
+    if (answerData.followUpAnswer) {
+      answerPayload.followUpAnswer = answerData.followUpAnswer;
+    }
+    
+    // 8. Save answer
+    const answer = await Answer.create(answerPayload);
+    
+    // 9. Update user.questionsAnswered count
+    user.questionsAnswered = (user.questionsAnswered || 0) + 1;
+    await user.save();
+    
+    logger.info(`User ${userId} answered question ${questionNumber}`);
+    
+    // 10. If voice answer, trigger transcription (async)
+    if (answerData.answerType === 'voice') {
+      this.transcribeVoiceAnswer(answer._id).catch(err => {
+        logger.error('Error transcribing voice answer:', err);
+      });
+    }
+    
+    return {
+      answer: answer.toClientJSON(),
+      progress: {
+        questionsAnswered: user.questionsAnswered,
+        totalQuestions: 50,
+        percentageComplete: Math.round((user.questionsAnswered / 50) * 100)
+      }
+    };
+  } catch (error) {
+    logger.error('Error submitting answer:', error);
+    throw error;
   }
+}
 
   /**
    * Validate answer format matches question type
