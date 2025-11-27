@@ -5,9 +5,9 @@ const questionRoutes = require('./question.routes');
 const analysisRoutes = require('./analysis.routes'); 
 const matchRoutes = require('./match.routes');
 const conversationRoutes = require('./conversation.routes');  
-console.log('Loading message routes...');
 const messageRoutes = require('./message.routes');
-console.log('Message routes loaded:', !!messageRoutes);       
+const testRoutes = require('./test.routes');
+
 
 const router = express.Router();
 
@@ -32,6 +32,7 @@ router.use('/questions', questionRoutes);
 router.use('/analysis', analysisRoutes); 
 router.use('/matches', matchRoutes);
 router.use('/conversations', conversationRoutes);  
-router.use('/messages', messageRoutes);           
+router.use('/messages', messageRoutes);   
+router.use('/test', testRoutes);        
 
 module.exports = router;

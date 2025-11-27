@@ -162,130 +162,131 @@ class QuestionController {
     }
   }
 
-  /**
-   * POST /api/v1/questions/:questionNumber/answer
-   * Submit an answer to a question
-   * Supports: text (typed), voice (audio file), single choice, multiple choice
-   */
-  static async submitAnswer(req, res) {
-    try {
-      const userId = req.user.id;
-      const questionNumber = parseInt(req.params.questionNumber);
+ /**
+ * POST /api/v1/questions/:questionNumber/answer
+ * Submit an answer to a question
+ * Supports: text (typed), voice (audio file), single choice, multiple choice
+ */
+static async submitAnswer(req, res) {
+  try {
+    const userId = req.user.id;
+    const questionNumber = parseInt(req.params.questionNumber);
 
-      // Validate question number
-      if (isNaN(questionNumber) || questionNumber < 1 || questionNumber > 50) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid question number. Must be between 1 and 50.'
-        });
-      }
-
-      // Prepare answer data based on answer type
-      const answerData = {
-        timeSpent: parseInt(req.body.timeSpent) || 0
-      };
-
-      // Handle voice answer (if audio file uploaded)
-      if (req.file) {
-        logger.info(`Voice answer received for question ${questionNumber}, file size: ${req.file.size} bytes`);
-
-        // Upload audio to S3
-        const audioUrl = await this.uploadVoiceToS3(req.file, userId, questionNumber);
-
-        // Get audio duration from request (client should send this)
-        const audioDuration = parseInt(req.body.audioDuration);
-        if (!audioDuration || audioDuration < 1 || audioDuration > 180) {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid audio duration. Must be between 1 and 180 seconds.'
-          });
-        }
-
-        answerData.answerType = 'voice';
-        answerData.audioUrl = audioUrl;
-        answerData.audioDuration = audioDuration;
-      } 
-      // Handle text answer (typed)
-      else if (req.body.textAnswer) {
-        answerData.textAnswer = req.body.textAnswer.trim();
-      } 
-      // Handle single choice answer
-      else if (req.body.selectedOption) {
-        answerData.selectedOption = req.body.selectedOption.toUpperCase();
-      } 
-      // Handle multiple choice answer
-      else if (req.body.selectedOptions) {
-        // Accept both array and comma-separated string
-        if (Array.isArray(req.body.selectedOptions)) {
-          answerData.selectedOptions = req.body.selectedOptions.map(opt => opt.toUpperCase());
-        } else if (typeof req.body.selectedOptions === 'string') {
-          answerData.selectedOptions = req.body.selectedOptions.split(',').map(opt => opt.trim().toUpperCase());
-        }
-      } 
-      else {
-        return res.status(400).json({
-          success: false,
-          message: 'No answer provided. Please provide textAnswer, selectedOption, selectedOptions, or upload an audio file.'
-        });
-      }
-
-      // Follow-up answer (optional)
-      if (req.body.followUpAnswer) {
-        answerData.followUpAnswer = req.body.followUpAnswer.toUpperCase();
-      }
-
-      logger.info(`Submitting answer for question ${questionNumber}, user ${userId}`, {
-        answerType: answerData.answerType || 'text/choice',
-        hasFollowUp: !!answerData.followUpAnswer
-      });
-
-      // Submit answer via service
-      const result = await QuestionService.submitAnswer(userId, questionNumber, answerData);
-
-      return res.status(201).json({
-        success: true,
-        message: 'Answer submitted successfully',
-        data: result
-      });
-    } catch (error) {
-      logger.error('Error in submitAnswer:', error);
-
-      // Handle specific error messages
-      if (error.message.includes('not unlocked yet')) {
-        return res.status(403).json({
-          success: false,
-          message: error.message
-        });
-      }
-
-      if (error.message.includes('already answered')) {
-        return res.status(409).json({
-          success: false,
-          message: error.message
-        });
-      }
-
-      if (error.message.includes('answer in order') || error.message.includes('answer question')) {
-        return res.status(400).json({
-          success: false,
-          message: error.message
-        });
-      }
-
-      if (error.message.includes('required') || error.message.includes('Invalid')) {
-        return res.status(400).json({
-          success: false,
-          message: error.message
-        });
-      }
-
-      return res.status(500).json({
+    // Validate question number
+    if (isNaN(questionNumber) || questionNumber < 1 || questionNumber > 50) {
+      return res.status(400).json({
         success: false,
-        message: error.message || 'Failed to submit answer',
-        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        message: 'Invalid question number. Must be between 1 and 50.'
       });
     }
+
+    // Prepare answer data based on answer type
+    const answerData = {
+      timeSpent: parseInt(req.body.timeSpent) || 0
+    };
+
+    // Handle voice answer (if audio file uploaded)
+    if (req.file) {
+      logger.info(`Voice answer received for question ${questionNumber}, file size: ${req.file.size} bytes`);
+
+      // FIX: Changed from this.uploadVoiceToS3 to QuestionController.uploadVoiceToS3
+      // Because we're in a static method, we need to reference the class directly
+      const audioUrl = await QuestionController.uploadVoiceToS3(req.file, userId, questionNumber);
+
+      // Get audio duration from request (client should send this)
+      const audioDuration = parseInt(req.body.audioDuration);
+      if (!audioDuration || audioDuration < 1 || audioDuration > 180) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid audio duration. Must be between 1 and 180 seconds.'
+        });
+      }
+
+      answerData.answerType = 'voice';
+      answerData.audioUrl = audioUrl;
+      answerData.audioDuration = audioDuration;
+    } 
+    // Handle text answer (typed)
+    else if (req.body.textAnswer) {
+      answerData.textAnswer = req.body.textAnswer.trim();
+    } 
+    // Handle single choice answer
+    else if (req.body.selectedOption) {
+      answerData.selectedOption = req.body.selectedOption.toUpperCase();
+    } 
+    // Handle multiple choice answer
+    else if (req.body.selectedOptions) {
+      // Accept both array and comma-separated string
+      if (Array.isArray(req.body.selectedOptions)) {
+        answerData.selectedOptions = req.body.selectedOptions.map(opt => opt.toUpperCase());
+      } else if (typeof req.body.selectedOptions === 'string') {
+        answerData.selectedOptions = req.body.selectedOptions.split(',').map(opt => opt.trim().toUpperCase());
+      }
+    } 
+    else {
+      return res.status(400).json({
+        success: false,
+        message: 'No answer provided. Please provide textAnswer, selectedOption, selectedOptions, or upload an audio file.'
+      });
+    }
+
+    // Follow-up answer (optional)
+    if (req.body.followUpAnswer) {
+      answerData.followUpAnswer = req.body.followUpAnswer.toUpperCase();
+    }
+
+    logger.info(`Submitting answer for question ${questionNumber}, user ${userId}`, {
+      answerType: answerData.answerType || 'text/choice',
+      hasFollowUp: !!answerData.followUpAnswer
+    });
+
+    // Submit answer via service
+    const result = await QuestionService.submitAnswer(userId, questionNumber, answerData);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Answer submitted successfully',
+      data: result
+    });
+  } catch (error) {
+    logger.error('Error in submitAnswer:', error);
+
+    // Handle specific error messages
+    if (error.message.includes('not unlocked yet')) {
+      return res.status(403).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    if (error.message.includes('already answered')) {
+      return res.status(409).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    if (error.message.includes('answer in order') || error.message.includes('answer question')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    if (error.message.includes('required') || error.message.includes('Invalid')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to submit answer',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
+}
 
   /**
    * Upload voice note to S3
