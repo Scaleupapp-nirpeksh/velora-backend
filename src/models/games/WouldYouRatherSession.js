@@ -510,8 +510,13 @@ wouldYouRatherSessionSchema.methods.recordAnswer = async function (
   }
 
   // Determine which player
-  const isPlayer1 = this.player1.userId.toString() === userId.toString();
-  const isPlayer2 = this.player2.userId.toString() === userId.toString();
+// Determine which player (handle both populated and non-populated cases)
+const p1Id = this.player1.userId._id ? this.player1.userId._id.toString() : this.player1.userId.toString();
+const p2Id = this.player2.userId._id ? this.player2.userId._id.toString() : this.player2.userId.toString();
+const userIdStr = userId.toString();
+
+const isPlayer1 = p1Id === userIdStr;
+const isPlayer2 = p2Id === userIdStr;
 
   if (!isPlayer1 && !isPlayer2) {
     throw new Error('User is not a player in this game');
@@ -810,9 +815,12 @@ wouldYouRatherSessionSchema.methods.addVoiceNote = async function (
   }
 
   // Check user is a player
-  const isPlayer = 
-    this.player1.userId.toString() === userId.toString() ||
-    this.player2.userId.toString() === userId.toString();
+// Check user is a player (handle both populated and non-populated cases)
+const p1Id = this.player1.userId._id ? this.player1.userId._id.toString() : this.player1.userId.toString();
+const p2Id = this.player2.userId._id ? this.player2.userId._id.toString() : this.player2.userId.toString();
+const userIdStr = userId.toString();
+
+const isPlayer = p1Id === userIdStr || p2Id === userIdStr;
 
   if (!isPlayer) {
     throw new Error('User is not a player in this game');
@@ -875,8 +883,13 @@ wouldYouRatherSessionSchema.methods.updateConnectionStatus = async function (
   userId,
   isConnected
 ) {
-  const isPlayer1 = this.player1.userId.toString() === userId.toString();
-  const isPlayer2 = this.player2.userId.toString() === userId.toString();
+// Handle both populated and non-populated cases
+const p1Id = this.player1.userId._id ? this.player1.userId._id.toString() : this.player1.userId.toString();
+const p2Id = this.player2.userId._id ? this.player2.userId._id.toString() : this.player2.userId.toString();
+const userIdStr = userId.toString();
+
+const isPlayer1 = p1Id === userIdStr;
+const isPlayer2 = p2Id === userIdStr;
 
   if (isPlayer1) {
     this.player1.isConnected = isConnected;
