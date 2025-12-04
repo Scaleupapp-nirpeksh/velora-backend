@@ -256,7 +256,7 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
       }
   
       // Record the answer
-      const result = await service.recordAnswer(sessionId, userIdStr, questionIndex, answer);
+      const result = await wouldYouRatherService.recordAnswer(sessionId, userIdStr, questionIndex, answer);
   
       // Acknowledge answer received
       socket.emit('wyr:answer_recorded', {
@@ -391,15 +391,16 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
       }
   
       // Verify user is part of this session
-      const isPlayer1 = session.player1.userId.toString() === userId;
-      const isPlayer2 = session.player2.userId.toString() === userId;
+
+      const isPlayer1 = session.player1.userId.toString() === userId.toString();
+      const isPlayer2 = session.player2.userId.toString() === userId.toString();
       if (!isPlayer1 && !isPlayer2) {
         socket.emit('wyr:error', { message: 'Not part of this session' });
         return;
       }
   
       // Update connection status
-      await service.updateConnectionStatus(sessionId, userId, true);
+      await wouldYouRatherService.updateConnectionStatus(sessionId, userId, true);
   
       // Track active session
       activeSessions.set(sessionId, {
@@ -415,7 +416,7 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
         console.log(`[WYR] Session ${sessionId} is in 'starting' status - starting game now`);
         
         // Start the game
-        const gameData = await service.startGame(sessionId);
+        const gameData = await wouldYouRatherService.startGame(sessionId);
         
         // Get player IDs
         const player1Id = session.player1.userId.toString();
@@ -447,7 +448,7 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
         // Game in progress - send current question
         console.log(`[WYR] Session ${sessionId} is playing - sending current question`);
         
-        const questionData = await service.getCurrentQuestion(sessionId);
+        const questionData = await wouldYouRatherService.getCurrentQuestion(sessionId);
         socket.emit('wyr:question', {
           sessionId,
           currentQuestion: questionData.currentQuestion,
@@ -459,7 +460,7 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
         // Game finished - send results
         console.log(`[WYR] Session ${sessionId} is completed - sending results`);
         
-        const results = await service.getResults(sessionId, userId);
+        const results = await wouldYouRatherService.getResults(sessionId, userId);
         socket.emit('wyr:game_completed', {
           sessionId,
           results,
