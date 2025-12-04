@@ -213,110 +213,105 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
    * Submit answer for current question
    * Payload: { sessionId, questionIndex, answer: 'A' | 'B' }
    */
-  socket.on('wyr:answer', async (data) => {
+  socket.on('wyr:answer', async ({ sessionId, questionIndex, answer }) => {
     try {
-      const { sessionId, questionIndex, answer } = data;
-
-      if (!sessionId || questionIndex === undefined || !answer) {
-        return socket.emit('wyr:error', { 
-          message: 'Session ID, question index, and answer are required' 
-        });
+      const userId = socketManager.socketUsers.get(socket.id);
+      if (!userId) {
+        socket.emit('wyr:error', { message: 'Not authenticated' });
+        return;
       }
-
+  
+      const userIdStr = userId.toString();
+      console.log(`[WYR] User ${userIdStr} answered ${answer} for Q${questionIndex} in ${sessionId}`);
+  
+      // ALWAYS fetch session from database to ensure we have correct player IDs
+      const session = await WouldYouRatherSession.findBySessionId(sessionId);
+      if (!session) {
+        socket.emit('wyr:error', { message: 'Session not found' });
+        return;
+      }
+  
+      // Get player IDs as strings
+      const player1Id = session.player1.userId.toString();
+      const player2Id = session.player2.userId.toString();
+  
+      // DEBUG
+      console.log(`[WYR DEBUG] P1: ${player1Id}, P2: ${player2Id}, User: ${userIdStr}`);
+  
+      // Check if user is a player
+      const isPlayer = userIdStr === player1Id || userIdStr === player2Id;
+      if (!isPlayer) {
+        socket.emit('wyr:error', { message: 'User is not a player in this game' });
+        return;
+      }
+  
+      // Update activeSessions map
+      const sessionInfo = { player1: player1Id, player2: player2Id };
+      activeSessions.set(sessionId, sessionInfo);
+  
+      // Validate answer
       if (!['A', 'B'].includes(answer)) {
-        return socket.emit('wyr:error', { 
-          message: 'Answer must be A or B' 
-        });
+        socket.emit('wyr:error', { message: 'Invalid answer. Must be A or B' });
+        return;
       }
-
-      console.log(`[WYR] User ${userId} answered ${answer} for Q${questionIndex} in ${sessionId}`);
-
-      // Record answer via service
-      const result = await wouldYouRatherService.recordAnswer(
-        sessionId, 
-        userId, 
-        questionIndex, 
-        answer
-      );
-
-      // Get session info
-      const sessionInfo = activeSessions.get(sessionId);
-      if (!sessionInfo) {
-        return socket.emit('wyr:error', { message: 'Session not found' });
-      }
-
-      // Determine partner
-      const partnerId = userId.toString() === sessionInfo.player1 
-        ? sessionInfo.player2 
-        : sessionInfo.player1;
-
+  
+      // Record the answer
+      const result = await service.recordAnswer(sessionId, userIdStr, questionIndex, answer);
+  
+      // Acknowledge answer received
+      socket.emit('wyr:answer_recorded', {
+        sessionId,
+        questionIndex,
+        waitingForPartner: !result.bothAnswered
+      });
+  
+      // Notify partner that this user answered
+      const partnerId = userIdStr === player1Id ? player2Id : player1Id;
+      socketManager.emitToUser(partnerId, 'wyr:partner_answered', {
+        sessionId,
+        questionIndex
+      });
+  
+      // If both answered, handle reveal and next question
       if (result.bothAnswered) {
-        // Both have answered - clear timer and reveal
+        // Clear the timer since both answered
         clearQuestionTimer(sessionId);
-
-        // Get question details for reveal
-        const session = await WouldYouRatherSession.findOne({ sessionId });
-        const questionNumber = session.questionOrder[questionIndex];
-        const question = await WouldYouRatherQuestion.findOne({ questionNumber });
-
-        const revealPayload = {
+  
+        // Send reveal to both players
+        const revealData = {
           sessionId,
           questionIndex,
-          questionNumber,
-          category: question.category,
-          optionA: question.optionA,
-          optionB: question.optionB,
-          matched: result.matched,
-          revealDuration: 3000 // 3 seconds to view reveal
+          yourAnswer: null, // Will be set per player
+          partnerAnswer: null, // Will be set per player
+          matched: result.player1Answer === result.player2Answer,
+          revealDuration: 3000
         };
-
-        // Send personalized reveal to each player
-        const isPlayer1 = userId.toString() === sessionInfo.player1;
-        
-        // To answering player
-        socket.emit('wyr:reveal', {
-          ...revealPayload,
-          yourAnswer: answer,
-          partnerAnswer: result.partnerAnswer
+  
+        // Send to player 1
+        socketManager.emitToUser(player1Id, 'wyr:reveal', {
+          ...revealData,
+          yourAnswer: result.player1Answer,
+          partnerAnswer: result.player2Answer
         });
-
-        // To partner
-        socketManager.emitToUser(partnerId, 'wyr:reveal', {
-          ...revealPayload,
-          yourAnswer: result.partnerAnswer,
-          partnerAnswer: answer
+  
+        // Send to player 2
+        socketManager.emitToUser(player2Id, 'wyr:reveal', {
+          ...revealData,
+          yourAnswer: result.player2Answer,
+          partnerAnswer: result.player1Answer
         });
-
-        console.log(`[WYR] Reveal sent for Q${questionIndex}, matched: ${result.matched}`);
-
-        // Move to next question after reveal duration
+  
+        // After 3 second reveal, move to next question
         setTimeout(async () => {
           await moveToNextQuestion(io, socketManager, sessionId, sessionInfo);
         }, 3000);
-
-      } else {
-        // Waiting for partner - notify them
-        socket.emit('wyr:answer_recorded', {
-          sessionId,
-          questionIndex,
-          waitingForPartner: true
-        });
-
-        // Notify partner that this player has answered
-        socketManager.emitToUser(partnerId, 'wyr:partner_answered', {
-          sessionId,
-          questionIndex
-        });
-
-        console.log(`[WYR] Waiting for partner to answer Q${questionIndex}`);
       }
-
+  
     } catch (error) {
       console.error('[WYR] Answer error:', error.message);
       socket.emit('wyr:error', { message: error.message });
     }
   });
-
   // =====================================================
   // VOICE NOTE EVENTS
   // =====================================================
