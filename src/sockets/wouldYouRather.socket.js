@@ -232,8 +232,8 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
       }
   
       // Get player IDs as strings
-      const player1Id = session.player1.userId.toString();
-      const player2Id = session.player2.userId.toString();
+      const player1Id = session.player1.userId._id.toString();
+      const player2Id = session.player2.userId._id.toString();
   
       // DEBUG
       console.log(`[WYR DEBUG] P1: ${player1Id}, P2: ${player2Id}, User: ${userIdStr}`);
@@ -337,9 +337,9 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
 
       // Get session info
       const session = await WouldYouRatherSession.findOne({ sessionId });
-      const partnerId = session.player1.userId.toString() === userId.toString()
-        ? session.player2.userId.toString()
-        : session.player1.userId.toString();
+      const partnerId = session.player1.userId._id.toString() === userId.toString()
+        ? session.player2.userId._id.toString()
+        : session.player1.userId._id.toString();
 
       // Confirm to sender
       socket.emit('wyr:voice_note_sent', {
@@ -392,8 +392,8 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
   
       // Verify user is part of this session
 
-      const isPlayer1 = session.player1.userId.toString() === userId.toString();
-      const isPlayer2 = session.player2.userId.toString() === userId.toString();
+      const isPlayer1 = session.player1.userId._id.toString() === userId.toString();
+      const isPlayer2 = session.player2.userId._id.toString() === userId.toString();
       if (!isPlayer1 && !isPlayer2) {
         socket.emit('wyr:error', { message: 'Not part of this session' });
         return;
@@ -404,8 +404,8 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
   
       // Track active session
       activeSessions.set(sessionId, {
-        player1: session.player1.userId.toString(),
-        player2: session.player2.userId.toString()
+        player1: session.player1.userId._id.toString(),
+        player2: session.player2.userId._id.toString()
       });
   
       console.log(`[WYR] Session ${sessionId} status: ${session.status}`);
@@ -419,8 +419,8 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
         const gameData = await wouldYouRatherService.startGame(sessionId);
         
         // Get player IDs
-        const player1Id = session.player1.userId.toString();
-        const player2Id = session.player2.userId.toString();
+        const player1Id = session.player1.userId._id.toString();
+        const player2Id = session.player2.userId._id.toString();
         
         // Send question to BOTH players
         const questionPayload = {
