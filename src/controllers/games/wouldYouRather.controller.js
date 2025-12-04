@@ -594,38 +594,33 @@ exports.createInvitation = async (req, res) => {
   }
 };
 
-/**
- * Accept invitation via HTTP (alternative to socket)
- * POST /api/games/would-you-rather/sessions/:sessionId/accept
- */
 exports.acceptInvitation = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { sessionId } = req.params;
-
-    if (!sessionId) {
-      return res.status(400).json({
+    try {
+      const { sessionId } = req.params;
+      const userId = req.user._id;
+  
+      const session = await wouldYouRatherService.acceptInvitation(sessionId, userId);
+      
+      // NEW: Also start the game after accepting
+      const gameData = await wouldYouRatherService.startGame(sessionId);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Invitation accepted and game started',
+        data: {
+          sessionId: session.sessionId,
+          status: gameData.status,
+          currentQuestion: gameData.currentQuestion
+        }
+      });
+    } catch (error) {
+      logger.error('Error accepting invitation:', { error: error.message, stack: error.stack });
+      res.status(400).json({
         success: false,
-        message: 'Session ID is required'
+        message: error.message
       });
     }
-
-    const result = await wouldYouRatherService.acceptInvitation(sessionId, userId);
-
-    res.status(200).json({
-      success: true,
-      message: 'Game invitation accepted',
-      data: result
-    });
-
-  } catch (error) {
-    logger.error('Error accepting invitation:', error);
-    res.status(error.message.includes('not found') ? 404 : 400).json({
-      success: false,
-      message: error.message || 'Failed to accept invitation'
-    });
-  }
-};
+  };
 
 /**
  * Decline invitation via HTTP (alternative to socket)

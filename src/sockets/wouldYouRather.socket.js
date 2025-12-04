@@ -377,56 +377,76 @@ function initializeWouldYouRatherSocket(io, socket, socketManager) {
    * Handle player reconnection to active game
    * Payload: { sessionId }
    */
-  socket.on('wyr:reconnect', async (data) => {
-    try {
-      const { sessionId } = data;
+  // In wouldYouRather.socket.js, find wyr:reconnect handler and replace with:
 
-      if (!sessionId) {
-        return socket.emit('wyr:error', { 
-          message: 'Session ID is required' 
-        });
-      }
-
-      console.log(`[WYR] User ${userId} reconnecting to ${sessionId}`);
-
-      // Update connection status
-      await wouldYouRatherService.updateConnectionStatus(sessionId, userId, true);
-
-      // Get current game state
-      const session = await WouldYouRatherSession.findOne({ sessionId });
-
-      if (!session) {
-        return socket.emit('wyr:error', { message: 'Session not found' });
-      }
-
-      // If game is in progress, send current question
-      if (session.status === 'playing') {
-        const currentQuestion = await wouldYouRatherService.getCurrentQuestion(sessionId);
-        socket.emit('wyr:question', currentQuestion);
-      } else if (['completed', 'discussion'].includes(session.status)) {
-        // Send results
-        const results = await wouldYouRatherService.getResults(sessionId, userId);
-        socket.emit('wyr:game_completed', results);
-      }
-
-      // Notify partner of reconnection
-      const sessionInfo = activeSessions.get(sessionId);
-      if (sessionInfo) {
-        const partnerId = userId.toString() === sessionInfo.player1 
-          ? sessionInfo.player2 
-          : sessionInfo.player1;
-        
-        socketManager.emitToUser(partnerId, 'wyr:partner_connected', {
-          sessionId,
-          isConnected: true
-        });
-      }
-
-    } catch (error) {
-      console.error('[WYR] Reconnect error:', error.message);
-      socket.emit('wyr:error', { message: error.message });
+socket.on('wyr:reconnect', async ({ sessionId }) => {
+  try {
+    const userId = socketManager.socketUsers.get(socket.id);
+    if (!userId) {
+      socket.emit('wyr:error', { message: 'Not authenticated' });
+      return;
     }
-  });
+
+    console.log(`[WYR] Reconnect request for session ${sessionId} from user ${userId}`);
+
+    const session = await WouldYouRatherSession.findBySessionId(sessionId);
+    if (!session) {
+      socket.emit('wyr:error', { message: 'Session not found' });
+      return;
+    }
+
+    // Verify user is part of this session
+    const isPlayer1 = session.player1.userId.toString() === userId;
+    const isPlayer2 = session.player2.userId.toString() === userId;
+    if (!isPlayer1 && !isPlayer2) {
+      socket.emit('wyr:error', { message: 'Not part of this session' });
+      return;
+    }
+
+    // Update connection status
+    await service.updateConnectionStatus(sessionId, userId, true);
+
+    // Track active session
+    activeSessions.set(sessionId, {
+      player1: session.player1.userId.toString(),
+      player2: session.player2.userId.toString()
+    });
+
+    // Handle based on session status
+    if (session.status === 'starting') {
+      // Game was accepted but never started - start it now!
+      console.log(`[WYR] Session ${sessionId} stuck in starting - starting game now`);
+      await startGameAndSendQuestion(io, socketManager, sessionId, session);
+      
+    } else if (session.status === 'playing') {
+      // Game in progress - send current question
+      const questionData = await service.getCurrentQuestion(sessionId);
+      socket.emit('wyr:question', {
+        sessionId,
+        ...questionData
+      });
+      
+    } else if (session.status === 'completed' || session.status === 'discussion') {
+      // Game finished - send results
+      const results = await service.getResults(sessionId, userId);
+      socket.emit('wyr:game_completed', {
+        sessionId,
+        results,
+        aiInsights: session.aiInsights
+      });
+    }
+
+  } catch (error) {
+    console.error('[WYR] Reconnect error:', error);
+    socket.emit('wyr:error', { message: error.message });
+  }
+});
+
+
+socket.on('wyr:join', async ({ sessionId }) => {
+  // Same logic as reconnect - just forward to reconnect
+  socket.emit('wyr:reconnect', { sessionId });
+});
 
   /**
    * Handle socket disconnect
