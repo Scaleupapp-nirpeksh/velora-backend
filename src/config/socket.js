@@ -7,6 +7,9 @@ const ConversationService = require('../services/conversation.service');
 const MessageService = require('../services/message.service');
 const logger = require('../utils/logger');
 
+// Import game socket handlers
+const { initializeWouldYouRatherSocket } = require('../sockets/wouldYouRather.socket');
+
 class SocketManager {
   constructor() {
     this.io = null;
@@ -84,7 +87,7 @@ class SocketManager {
       // Join user's conversation rooms
       await this.joinUserConversations(socket);
 
-      // Socket event handlers
+      // Messaging event handlers
       this.handleJoinConversation(socket);
       this.handleLeaveConversation(socket);
       this.handleSendMessage(socket);
@@ -93,6 +96,13 @@ class SocketManager {
       this.handleDeleteMessage(socket);
       this.handleEditMessage(socket);
       this.handleReaction(socket);
+
+      // =====================================================
+      // GAME HANDLERS - Would You Rather
+      // =====================================================
+      initializeWouldYouRatherSocket(this.io, socket, this);
+
+      // Disconnect handler (must be last)
       this.handleDisconnect(socket);
     });
   }
