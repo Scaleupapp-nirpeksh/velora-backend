@@ -631,11 +631,16 @@ wouldYouRatherSessionSchema.methods.handleTimeout = async function (questionInde
  * Move to the next question
  */
 wouldYouRatherSessionSchema.methods.nextQuestion = async function () {
-  if (this.status !== 'playing') {
-    throw new Error('Game is not in playing state');
-  }
-
-  this.currentQuestionIndex++;
+    if (this.status !== 'playing') {
+      throw new Error('Game is not in playing state');
+    }
+  
+    // Check if game is complete BEFORE incrementing
+    if (this.currentQuestionIndex >= 49) {
+      return this.completeGame();
+    }
+  
+    this.currentQuestionIndex++;
 
   // Check if game is complete
   if (this.currentQuestionIndex >= 50) {
