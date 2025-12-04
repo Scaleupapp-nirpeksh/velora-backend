@@ -1,3 +1,4 @@
+//src/middleware/auth.middleware.js
 const User = require('../models/User');
 const JWTService = require('../services/jwt.service');
 const ApiError = require('../utils/apiError');

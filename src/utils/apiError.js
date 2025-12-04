@@ -2,7 +2,7 @@
  * Custom API Error Class
  * Extends native Error class with statusCode and isOperational properties
  */
-
+//src/utils/apiError.js
 class ApiError extends Error {
     constructor(statusCode, message, isOperational = true, stack = '') {
       super(message);

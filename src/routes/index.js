@@ -7,7 +7,7 @@ const matchRoutes = require('./match.routes');
 const conversationRoutes = require('./conversation.routes');  
 const messageRoutes = require('./message.routes');
 const testRoutes = require('./test.routes');
-
+const twoTruthsLieRoutes = require('./twoTruthsLie.routes');  // Add this
 
 const router = express.Router();
 
@@ -33,6 +33,7 @@ router.use('/analysis', analysisRoutes);
 router.use('/matches', matchRoutes);
 router.use('/conversations', conversationRoutes);  
 router.use('/messages', messageRoutes);   
-router.use('/test', testRoutes);        
+router.use('/test', testRoutes);
+router.use('/games/two-truths-lie', twoTruthsLieRoutes);  // Add this
 
 module.exports = router;
