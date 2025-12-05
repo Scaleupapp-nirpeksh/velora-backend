@@ -9,6 +9,7 @@ const logger = require('../utils/logger');
 
 // Import game socket handlers
 const { initializeWouldYouRatherSocket } = require('../sockets/wouldYouRather.socket');
+const { initializeIntimacySpectrumSocket } = require('../sockets/intimacySpectrum.socket');
 
 class SocketManager {
   constructor() {
@@ -101,6 +102,12 @@ class SocketManager {
       // GAME HANDLERS - Would You Rather
       // =====================================================
       initializeWouldYouRatherSocket(this.io, socket, this);
+
+      // =====================================================
+      // GAME HANDLERS - Intimacy Spectrum
+      // =====================================================
+      initializeIntimacySpectrumSocket(this.io, socket, this);
+
 
       // Disconnect handler (must be last)
       this.handleDisconnect(socket);
