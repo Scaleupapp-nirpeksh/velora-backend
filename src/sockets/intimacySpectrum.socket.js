@@ -1,4 +1,4 @@
-// src/sockets/intimacySpectrum.socket.js (REDESIGNED)
+// src/sockets/intimacySpectrum.socket.js
 
 const intimacySpectrumService = require('../services/games/intimacySpectrum.service');
 const IntimacySpectrumSession = require('../models/games/IntimacySpectrumSession');
@@ -141,9 +141,10 @@ async function startCountdown(io, sessionId) {
   logger.info('[IS] Starting countdown', { sessionId });
 
   // Emit countdown start
-  io.to(room).emit('is:state', { 
-    status: 'starting',
-    countdown: COUNTDOWN_TIME_MS / 1000 
+  io.to(room).emit('is:countdown', { 
+    sessionId,
+    countdown: COUNTDOWN_TIME_MS / 1000,
+    startsAt: new Date(Date.now() + COUNTDOWN_TIME_MS).toISOString()
   });
 
   // Set timer to start game
@@ -156,13 +157,26 @@ async function startCountdown(io, sessionId) {
 
 async function startGame(io, sessionId) {
   try {
+    logger.info('[IS] startGame() called', { sessionId });
+    
     clearTimer(sessionId);
 
     const session = await IntimacySpectrumSession.findBySessionId(sessionId);
-    if (!session) return;
+    if (!session) {
+      logger.warn('[IS] startGame - session not found', { sessionId });
+      return;
+    }
+
+    logger.info('[IS] startGame - checking connections', { 
+      sessionId,
+      status: session.status,
+      p1Connected: session.player1.isConnected,
+      p2Connected: session.player2.isConnected
+    });
 
     // Verify both still connected
     if (!session.player1.isConnected || !session.player2.isConnected) {
+      logger.warn('[IS] startGame - not all players connected, pausing', { sessionId });
       session.status = 'paused';
       await session.save();
       await emitStateToRoom(io, session);
@@ -170,6 +184,7 @@ async function startGame(io, sessionId) {
     }
 
     // Start the game
+    logger.info('[IS] startGame - calling service.startGame()', { sessionId });
     const gameData = await intimacySpectrumService.startGame(sessionId);
     
     // Reload session
@@ -303,91 +318,165 @@ function initializeIntimacySpectrumSocket(io, socket, socketManager) {
   logger.info('[IS] Socket initialized', { oduserId });
 
   // -------------------------------------------------
-// JOIN - Get current game state
-// -------------------------------------------------
-socket.on('is:join', async ({ sessionId }) => {
-  try {
-    let session;
+  // INVITE - Create and send game invitation
+  // -------------------------------------------------
+  socket.on('is:invite', async ({ matchId }) => {
+    try {
+      if (!matchId) {
+        socket.emit('is:error', { code: 'MISSING_MATCH', message: 'Match ID required' });
+        return;
+      }
 
-    if (sessionId) {
-      session = await IntimacySpectrumSession.findBySessionId(sessionId);
-    } else {
-      session = await IntimacySpectrumSession.findActiveForUser(oduserId);
-    }
-
-    if (!session) {
-      socket.emit('is:state', { status: 'none' });
-      return;
-    }
-
-    const playerInfo = getPlayerId(session, oduserId);
-    if (!playerInfo) {
-      socket.emit('is:error', { code: 'NOT_PLAYER', message: 'Not a player in this game' });
-      return;
-    }
-
-    // Join session room
-    socket.join(getRoom(session.sessionId));
-
-    // Mark connected
-    await intimacySpectrumService.updateConnectionStatus(session.sessionId, oduserId, true);
-
-    // Reload and emit state
-    session = await IntimacySpectrumSession.findBySessionId(session.sessionId);
-    const state = await buildStatePayload(session, oduserId);
-    
-    socket.emit('is:state', state);
-
-    // Notify partner
-    socket.to(getRoom(session.sessionId)).emit('is:partner_connected', {
-      oduserId: oduserId.toString()
-    });
-
-    logger.info('[IS] Player joined', { 
-      oduserId, 
-      sessionId: session.sessionId, 
-      status: session.status,
-      p1Connected: session.player1.isConnected,
-      p2Connected: session.player2.isConnected
-    });
-
-    // ============ ADD THIS BLOCK ============
-    // If status is 'starting' and both now connected, start countdown
-    if (session.status === 'starting' && session.player1.isConnected && session.player2.isConnected) {
-      // Only start if no countdown already running
-      if (!gameTimers.has(session.sessionId)) {
-        logger.info('[IS] Both players connected in starting state, beginning countdown', { 
-          sessionId: session.sessionId 
+      // Check if user already has an active game
+      const existingSession = await IntimacySpectrumSession.findActiveForUser(oduserId);
+      if (existingSession) {
+        socket.emit('is:error', { 
+          code: 'ALREADY_IN_GAME',
+          message: 'You already have an active game',
+          sessionId: existingSession.sessionId
         });
-        await startCountdown(io, session.sessionId);
+        return;
+      }
+
+      // Create the invitation
+      const result = await intimacySpectrumService.createInvitation(oduserId, matchId);
+      const { session, invitedUser } = result;
+
+      // Join the session room
+      socket.join(getRoom(session.sessionId));
+
+      // Mark player 1 as connected
+      await intimacySpectrumService.updateConnectionStatus(session.sessionId, oduserId, true);
+
+      // Confirm to initiator
+      socket.emit('is:invitation_sent', {
+        sessionId: session.sessionId,
+        status: 'pending',
+        expiresAt: session.expiresAt,
+        invitedUser: {
+          oduserId: invitedUser.oduserId,
+          firstName: invitedUser.firstName,
+          lastName: invitedUser.lastName,
+          profilePhoto: invitedUser.profilePhoto
+        }
+      });
+
+      // Notify invited user
+      io.to(`user:${invitedUser.oduserId}`).emit('is:invited', {
+        sessionId: session.sessionId,
+        expiresAt: session.expiresAt,
+        invitedBy: {
+          oduserId: oduserId.toString(),
+          firstName: session.player1.userId.firstName,
+          lastName: session.player1.userId.lastName,
+          profilePhoto: session.player1.userId.profilePhoto
+        },
+        gameInfo: {
+          name: 'Intimacy Spectrum',
+          description: 'Explore your compatibility through 30 intimate questions',
+          questionCount: 30,
+          timePerQuestion: 20
+        }
+      });
+
+      logger.info('[IS] Invitation created and sent', {
+        sessionId: session.sessionId,
+        from: oduserId,
+        to: invitedUser.oduserId
+      });
+
+    } catch (error) {
+      logger.error('[IS] Invite error:', error);
+      socket.emit('is:error', { code: 'INVITE_FAILED', message: error.message });
+    }
+  });
+
+  // -------------------------------------------------
+  // JOIN - Get current game state
+  // -------------------------------------------------
+  socket.on('is:join', async ({ sessionId }) => {
+    try {
+      let session;
+
+      if (sessionId) {
+        session = await IntimacySpectrumSession.findBySessionId(sessionId);
       } else {
-        logger.info('[IS] Countdown already running', { sessionId: session.sessionId });
+        session = await IntimacySpectrumSession.findActiveForUser(oduserId);
       }
-    }
-    // ========================================
 
-    // If was paused and both now connected, resume
-    if (session.status === 'paused' && session.player1.isConnected && session.player2.isConnected) {
-      session.status = 'playing';
-      await session.save();
-      
-      // Restart question timer
-      const timeLeft = session.currentQuestionExpiresAt 
-        ? Math.max(0, session.currentQuestionExpiresAt - Date.now())
-        : QUESTION_TIME_MS;
-      
-      if (timeLeft > 0) {
-        startQuestionTimer(io, session.sessionId, session.currentQuestionIndex);
+      if (!session) {
+        socket.emit('is:state', { status: 'none' });
+        return;
       }
-      
-      await emitStateToRoom(io, session);
-    }
 
-  } catch (error) {
-    logger.error('[IS] Join error:', error);
-    socket.emit('is:error', { code: 'JOIN_FAILED', message: error.message });
-  }
-});
+      const playerInfo = getPlayerId(session, oduserId);
+      if (!playerInfo) {
+        socket.emit('is:error', { code: 'NOT_PLAYER', message: 'Not a player in this game' });
+        return;
+      }
+
+      // Join session room
+      socket.join(getRoom(session.sessionId));
+
+      // Mark connected
+      await intimacySpectrumService.updateConnectionStatus(session.sessionId, oduserId, true);
+
+      // Reload and emit state
+      session = await IntimacySpectrumSession.findBySessionId(session.sessionId);
+      const state = await buildStatePayload(session, oduserId);
+      
+      socket.emit('is:state', state);
+
+      // Notify partner
+      socket.to(getRoom(session.sessionId)).emit('is:partner_connected', {
+        oduserId: oduserId.toString()
+      });
+
+      logger.info('[IS] Player joined', { 
+        oduserId, 
+        sessionId: session.sessionId, 
+        status: session.status,
+        p1Connected: session.player1.isConnected,
+        p2Connected: session.player2.isConnected
+      });
+
+      // If status is 'starting' and both now connected, start countdown
+      if (session.status === 'starting' && session.player1.isConnected && session.player2.isConnected) {
+        // Only start if no countdown already running
+        if (!gameTimers.has(session.sessionId)) {
+          logger.info('[IS] Both players connected in starting state, beginning countdown', { 
+            sessionId: session.sessionId 
+          });
+          await startCountdown(io, session.sessionId);
+        } else {
+          logger.info('[IS] Countdown already running', { sessionId: session.sessionId });
+        }
+      }
+
+      // If was paused and both now connected, resume
+      if (session.status === 'paused' && session.player1.isConnected && session.player2.isConnected) {
+        session.status = 'playing';
+        await session.save();
+        
+        logger.info('[IS] Resuming paused game', { sessionId: session.sessionId });
+        
+        // Restart question timer
+        const timeLeft = session.currentQuestionExpiresAt 
+          ? Math.max(0, session.currentQuestionExpiresAt - Date.now())
+          : QUESTION_TIME_MS;
+        
+        if (timeLeft > 0) {
+          startQuestionTimer(io, session.sessionId, session.currentQuestionIndex);
+        }
+        
+        await emitStateToRoom(io, session);
+      }
+
+    } catch (error) {
+      logger.error('[IS] Join error:', error);
+      socket.emit('is:error', { code: 'JOIN_FAILED', message: error.message });
+    }
+  });
 
   // -------------------------------------------------
   // ACCEPT - Accept invitation
@@ -396,6 +485,17 @@ socket.on('is:join', async ({ sessionId }) => {
     try {
       if (!sessionId) {
         socket.emit('is:error', { code: 'MISSING_SESSION', message: 'Session ID required' });
+        return;
+      }
+
+      // Check if user already has an active game (different from this one)
+      const existingSession = await IntimacySpectrumSession.findActiveForUser(oduserId);
+      if (existingSession && existingSession.sessionId !== sessionId) {
+        socket.emit('is:error', { 
+          code: 'ALREADY_IN_GAME',
+          message: 'You already have an active game',
+          sessionId: existingSession.sessionId
+        });
         return;
       }
 
@@ -554,28 +654,32 @@ socket.on('is:join', async ({ sessionId }) => {
 
       // Check if we should pause (give grace period)
       setTimeout(async () => {
-        const currentSession = await IntimacySpectrumSession.findBySessionId(session.sessionId);
-        if (!currentSession) return;
-        
-        const playerInfo = getPlayerId(currentSession, oduserId);
-        if (!playerInfo) return;
-
-        const player = playerInfo.isPlayer1 ? currentSession.player1 : currentSession.player2;
-        
-        // If still disconnected and game is active, pause it
-        if (!player.isConnected && ['starting', 'playing'].includes(currentSession.status)) {
-          currentSession.status = 'paused';
-          await currentSession.save();
+        try {
+          const currentSession = await IntimacySpectrumSession.findBySessionId(session.sessionId);
+          if (!currentSession) return;
           
-          clearTimer(session.sessionId);
-          
-          io.to(room).emit('is:state', {
-            status: 'paused',
-            sessionId: session.sessionId,
-            reason: 'Player disconnected'
-          });
+          const playerInfo = getPlayerId(currentSession, oduserId);
+          if (!playerInfo) return;
 
-          logger.info('[IS] Game paused due to disconnect', { sessionId: session.sessionId });
+          const player = playerInfo.isPlayer1 ? currentSession.player1 : currentSession.player2;
+          
+          // If still disconnected and game is active, pause it
+          if (!player.isConnected && ['starting', 'playing'].includes(currentSession.status)) {
+            currentSession.status = 'paused';
+            await currentSession.save();
+            
+            clearTimer(session.sessionId);
+            
+            io.to(room).emit('is:state', {
+              status: 'paused',
+              sessionId: session.sessionId,
+              reason: 'Player disconnected'
+            });
+
+            logger.info('[IS] Game paused due to disconnect', { sessionId: session.sessionId });
+          }
+        } catch (err) {
+          logger.error('[IS] Disconnect grace period error:', err);
         }
       }, RECONNECT_GRACE_MS);
 
