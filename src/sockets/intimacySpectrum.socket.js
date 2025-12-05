@@ -303,70 +303,91 @@ function initializeIntimacySpectrumSocket(io, socket, socketManager) {
   logger.info('[IS] Socket initialized', { oduserId });
 
   // -------------------------------------------------
-  // JOIN - Get current game state
-  // -------------------------------------------------
-  socket.on('is:join', async ({ sessionId }) => {
-    try {
-      let session;
+// JOIN - Get current game state
+// -------------------------------------------------
+socket.on('is:join', async ({ sessionId }) => {
+  try {
+    let session;
 
-      if (sessionId) {
-        session = await IntimacySpectrumSession.findBySessionId(sessionId);
-      } else {
-        session = await IntimacySpectrumSession.findActiveForUser(oduserId);
-      }
-
-      if (!session) {
-        socket.emit('is:state', { status: 'none' });
-        return;
-      }
-
-      const playerInfo = getPlayerId(session, oduserId);
-      if (!playerInfo) {
-        socket.emit('is:error', { code: 'NOT_PLAYER', message: 'Not a player in this game' });
-        return;
-      }
-
-      // Join session room
-      socket.join(getRoom(session.sessionId));
-
-      // Mark connected
-      await intimacySpectrumService.updateConnectionStatus(session.sessionId, oduserId, true);
-
-      // Reload and emit state
-      session = await IntimacySpectrumSession.findBySessionId(session.sessionId);
-      const state = await buildStatePayload(session, oduserId);
-      
-      socket.emit('is:state', state);
-
-      // Notify partner
-      socket.to(getRoom(session.sessionId)).emit('is:partner_connected', {
-        oduserId: oduserId.toString()
-      });
-
-      // If was paused and both now connected, resume
-      if (session.status === 'paused' && session.player1.isConnected && session.player2.isConnected) {
-        session.status = 'playing';
-        await session.save();
-        
-        // Restart question timer
-        const timeLeft = session.currentQuestionExpiresAt 
-          ? Math.max(0, session.currentQuestionExpiresAt - Date.now())
-          : QUESTION_TIME_MS;
-        
-        if (timeLeft > 0) {
-          startQuestionTimer(io, session.sessionId, session.currentQuestionIndex);
-        }
-        
-        await emitStateToRoom(io, session);
-      }
-
-      logger.info('[IS] Player joined', { oduserId, sessionId: session.sessionId, status: session.status });
-
-    } catch (error) {
-      logger.error('[IS] Join error:', error);
-      socket.emit('is:error', { code: 'JOIN_FAILED', message: error.message });
+    if (sessionId) {
+      session = await IntimacySpectrumSession.findBySessionId(sessionId);
+    } else {
+      session = await IntimacySpectrumSession.findActiveForUser(oduserId);
     }
-  });
+
+    if (!session) {
+      socket.emit('is:state', { status: 'none' });
+      return;
+    }
+
+    const playerInfo = getPlayerId(session, oduserId);
+    if (!playerInfo) {
+      socket.emit('is:error', { code: 'NOT_PLAYER', message: 'Not a player in this game' });
+      return;
+    }
+
+    // Join session room
+    socket.join(getRoom(session.sessionId));
+
+    // Mark connected
+    await intimacySpectrumService.updateConnectionStatus(session.sessionId, oduserId, true);
+
+    // Reload and emit state
+    session = await IntimacySpectrumSession.findBySessionId(session.sessionId);
+    const state = await buildStatePayload(session, oduserId);
+    
+    socket.emit('is:state', state);
+
+    // Notify partner
+    socket.to(getRoom(session.sessionId)).emit('is:partner_connected', {
+      oduserId: oduserId.toString()
+    });
+
+    logger.info('[IS] Player joined', { 
+      oduserId, 
+      sessionId: session.sessionId, 
+      status: session.status,
+      p1Connected: session.player1.isConnected,
+      p2Connected: session.player2.isConnected
+    });
+
+    // ============ ADD THIS BLOCK ============
+    // If status is 'starting' and both now connected, start countdown
+    if (session.status === 'starting' && session.player1.isConnected && session.player2.isConnected) {
+      // Only start if no countdown already running
+      if (!gameTimers.has(session.sessionId)) {
+        logger.info('[IS] Both players connected in starting state, beginning countdown', { 
+          sessionId: session.sessionId 
+        });
+        await startCountdown(io, session.sessionId);
+      } else {
+        logger.info('[IS] Countdown already running', { sessionId: session.sessionId });
+      }
+    }
+    // ========================================
+
+    // If was paused and both now connected, resume
+    if (session.status === 'paused' && session.player1.isConnected && session.player2.isConnected) {
+      session.status = 'playing';
+      await session.save();
+      
+      // Restart question timer
+      const timeLeft = session.currentQuestionExpiresAt 
+        ? Math.max(0, session.currentQuestionExpiresAt - Date.now())
+        : QUESTION_TIME_MS;
+      
+      if (timeLeft > 0) {
+        startQuestionTimer(io, session.sessionId, session.currentQuestionIndex);
+      }
+      
+      await emitStateToRoom(io, session);
+    }
+
+  } catch (error) {
+    logger.error('[IS] Join error:', error);
+    socket.emit('is:error', { code: 'JOIN_FAILED', message: error.message });
+  }
+});
 
   // -------------------------------------------------
   // ACCEPT - Accept invitation
