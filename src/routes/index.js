@@ -10,7 +10,8 @@ const messageRoutes = require('./message.routes');
 const testRoutes = require('./test.routes');
 const twoTruthsLieRoutes = require('./twoTruthsLie.routes');
 const wouldYouRatherRoutes = require('./games/wouldYouRather.routes');
-const intimacySpectrumRoutes = require('./games/intimacySpectrum.routes');  // Add this
+const intimacySpectrumRoutes = require('./games/intimacySpectrum.routes');
+const neverHaveIEverRoutes = require('./games/neverHaveIEver.routes'); 
 
 
 const router = express.Router();
@@ -40,6 +41,7 @@ router.use('/messages', messageRoutes);
 router.use('/test', testRoutes);
 router.use('/games/two-truths-lie', twoTruthsLieRoutes);
 router.use('/games/would-you-rather', wouldYouRatherRoutes);
-router.use('/games/intimacy-spectrum', intimacySpectrumRoutes);  // Add this
+router.use('/games/intimacy-spectrum', intimacySpectrumRoutes);
+router.use('/games/never-have-i-ever', neverHaveIEverRoutes);  
 
 module.exports = router;

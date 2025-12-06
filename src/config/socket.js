@@ -10,6 +10,7 @@ const logger = require('../utils/logger');
 // Import game socket handlers
 const { initializeWouldYouRatherSocket } = require('../sockets/wouldYouRather.socket');
 const { initializeIntimacySpectrumSocket } = require('../sockets/intimacySpectrum.socket');
+const { initializeNeverHaveIEverSocket } = require('../sockets/neverHaveIEver.socket');
 
 class SocketManager {
   constructor() {
@@ -109,6 +110,11 @@ class SocketManager {
       initializeIntimacySpectrumSocket(this.io, socket, this);
 
 
+      // =====================================================
+      // GAME HANDLERS - Never Have I Ever
+      // =====================================================
+      initializeNeverHaveIEverSocket(this.io, socket, this);  
+      // =====================================================
       // Disconnect handler (must be last)
       this.handleDisconnect(socket);
     });
