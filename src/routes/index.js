@@ -15,6 +15,7 @@ const neverHaveIEverRoutes = require('./games/neverHaveIEver.routes');
 const whatWouldYouDoRoutes = require('./games/whatWouldYouDo.routes');
 const dreamBoardRoutes = require('./games/dreamBoard.routes');
 const coupleCompatibilityRoutes = require('./coupleCompatibility.routes');
+const dateDecisionRoutes = require('./dateDecision.routes');
 
 const router = express.Router();
 
@@ -48,4 +49,5 @@ router.use('/games/never-have-i-ever', neverHaveIEverRoutes);
 router.use('/games/what-would-you-do', whatWouldYouDoRoutes);
 router.use('/games/dream-board', dreamBoardRoutes);
 router.use('/compatibility', coupleCompatibilityRoutes);
+router.use('/dateplan', dateDecisionRoutes); 
 module.exports = router;
